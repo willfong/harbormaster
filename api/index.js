@@ -2,11 +2,10 @@ const express = require("express");
 const axios = require("axios");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const yaml = require('js-yaml');
 
-
-const CACHE = require("./cache");
 const DB = require("./db");
-const UTILS = require("./utils");
+const { response } = require("express");
 
 // Setup
 const app = express();
@@ -16,115 +15,127 @@ app.use(cors());
 var apiRouter = express.Router();
 app.use('/api', apiRouter);
 
-const unprotectedRoutes = [
-  "/api/hello",
-  "/api/login-with-username"
-];
-apiRouter.use(UTILS.routeJWT.unless({ path: unprotectedRoutes }));
-app.use(function (err, req, res, next) {
-  if (err.name === 'UnauthorizedError') {
-    console.log("403 - Token missing for:", req.originalUrl);
-    return res.status(403).send(`Authorization token required for: ${req.originalUrl}`);
-  }
-});
+const REGISTRY_HOST = process.env.REGISTRY_HOST || "localhost:5000";
+const REGISTRY_URL = `http://${REGISTRY_HOST}/v2`;
+console.log(`[CONFIG] REGISTRY_URL: ${REGISTRY_URL}`);
+const axios_registry = axios.create({ baseURL: REGISTRY_URL });
 
-const staticPagePath = process.env.STATIC_PAGE_PATH || "../nuxt/dist";
-console.log(`Serving static pages from: ${staticPagePath}`);
+
+const staticPagePath = process.env.STATIC_PAGE_PATH || "../client/dist";
+console.log(`[CONFIG] STATIC_PAGE_PATH: ${staticPagePath}`);
 app.use(express.static(staticPagePath));
 
-
-async function getAgentData() {
-  /*
-[
-  {
-    registration_end_date: '2020-12-31',
-    estate_agent_license_no: 'L3....2K',
-    salesperson_name: "'AF...RI",
-    registration_no: 'R0...2J',
-    registration_start_date: '2019-02-27',
-    estate_agent_name: 'ER...TD',
-    _id: 1
-  },
-*/
-  const dataUrl =
-    "https://data.gov.sg/api/action/datastore_search?resource_id=a41ce851-728e-4d65-8dc5-e0515a01ff31&limit=500";
-  const response = await axios.get(dataUrl);
-  return response.data.result.records;
-}
+const DOCKER_SOCK = process.env.DOCKER_SOCK || '/var/run/docker.sock';
+console.log(`[CONFIG] DOCKER_SOCK: ${DOCKER_SOCK}`);
+const axios_docker = axios.create({ socketPath: DOCKER_SOCK });
 
 
 // Routes
-apiRouter.get("/hello", (req, res) => {
-  res.json({ msg: "Hello World! You are my sunshine!" });
+apiRouter.get("/repository/list", async (req, res) => {
+  const response = await axios_registry.get("/_catalog");
+  return res.json(response.data);
 });
 
-apiRouter.post("/login-with-username", async (req, res) => {
-  const username = req.body.username;
-  if (!username) return res.status(404).send("404 - Please provide a username");
-  console.log("[LOGIN-WITH-USERNAME]", username);
-  const token = await UTILS.createJwt(username);
-  return res.json({ token, username });
+apiRouter.get("/repository/tags", async (req, res) => {
+  const repository = req.query.repository;
+  if (!repository) return res.status(404).send("404 - Please provide a repository");
+  const response = await axios_registry.get(`/${repository}/tags/list`);
+  return res.json(response.data);
 });
 
-apiRouter.get("/all", async (req, res) => {
-  const kittens = await DB.Kitten.find();
-  console.log(kittens);
-  res.send(kittens);
-});
+apiRouter.post("/repository/deploy", async (req, res) => {
+  const repository = req.body.repository;
+  if (!repository) return res.status(403).send("401 - Please provide a repository");
+  const tag = req.body.tag;
+  if (!tag) return res.status(403).send("402 - Please provide a tag");
 
-apiRouter.post("/add", (req, res) => {
-  const newKitten = new DB.Kitten({ name: req.body.name });
-  newKitten.save();
-  res.json(newKitten);
-});
+  const Image = `${REGISTRY_HOST}/${repository}:${tag}`;
 
-apiRouter.get("/cacheGet", async (req, res) => {
-  const key = req.query.key;
-  const response = await CACHE.get(key);
-  res.json(response);
-});
-
-apiRouter.post("/cacheSet", async (req, res) => {
-  const key = req.body.key;
-  const value = req.body.value;
-  const ttl = req.body.ttl;
-  await CACHE.set(key, value, ttl);
-  const response = await CACHE.get(key);
-  res.json(response);
-});
-
-apiRouter.get("/agents/populate", async (req, res) => {
-  const agents = await getAgentData();
-  DB.Agent.deleteMany({}, function (err) {
-    if (err) console.log(err);
-  });
-  agents.forEach((agent) => {
-    DB.Agent.create(agent, function (err, instance) {
-      if (err) {
-        console.log(err);
-      } else {
-        console.log("Saved!", instance.registration_no);
-      }
-    });
-  });
-  res.send("Done");
-});
-
-apiRouter.get("/agents", async (req, res) => {
-  console.log("Fetching agents from database");
-  let options = {};
-  if (req.query.limit) {
-    console.log("Limiting recrods to:", req.query.limit);
-    options['limit'] = parseInt(req.query.limit, 10);
+  let extraConfig;
+  try {
+    const results = await DB.all("SELECT yaml FROM configs WHERE name = ?", [repository]).catch(console.error);
+    const yamlConfig = results[0].yaml;
+    extraConfig = yaml.load(yamlConfig, { json: true });
+  } catch (e) {
+    console.log(e);
   }
-  DB.Agent.find({}, null, options, (err, results) => {
-    if (err) {
-      console.log(err);
-      res.json("Error");
-    } else {
-      res.json(results);
+
+  try {
+    console.log(`[${repository}] Stopping container...`);
+    await axios_docker.post(`/v1.41/containers/${repository}/stop`, {})
+  } catch (e) {
+    if (e.response.data.message && !e.response.data.message.startsWith('No such container')) {
+      console.log('error from stop', e.response.data.message);
     }
-  });
+  }
+
+  try {
+    console.log(`[${repository}] Deleting ontainer...`);
+    await axios_docker.delete(`/v1.41/containers/${repository}`);
+  } catch (e) {
+    if (!e.response.data.message.startsWith('No such container')) {
+      console.log('error from delete', e.response.data.message);
+    }
+  }
+  try {
+    console.log(`[${repository}] Creating container using '${Image}'...`)
+    const params = { Image, ...extraConfig };
+    await axios_docker.post('/v1.41/containers/create', params, { params: { name: repository } });
+  } catch (e) {
+    console.log('error from create', e.response);
+  }
+
+  try {
+    console.log(`[${repository}] Starting container...`)
+    await axios_docker.post(`/v1.41/containers/${repository}/start`, {});
+  } catch (e) {
+    console.log('error from start', e.response);
+  }
+
+  return res.json("ok");
+});
+
+apiRouter.get("/repository/status", async (req, res) => {
+  const repository = req.query.repository;
+  if (!repository) return res.status(403).send("401 - Please provide a repository");
+  try {
+    console.log(`[${repository}] Getting container status...`);
+    const response = await axios_docker.get(`/v1.41/containers/${repository}/json`, {})
+    return res.json(response.data);
+  } catch (e) {
+    if (e.response.data.message && !e.response.data.message.startsWith('No such container')) {
+      console.log('error from stop', e.response.data.message);
+    }
+  }
+  return res.json(false);
+});
+
+apiRouter.get("/repository/config", async (req, res) => {
+  const repository = req.query.repository;
+  if (!repository) return res.status(404).send("404 - Please provide a repository");
+  const results = await DB.all("SELECT yaml FROM configs WHERE name = ?", [repository]).catch(console.error);
+  return res.json(results[0]);
+});
+
+apiRouter.post("/repository/config", async (req, res) => {
+  const repository = req.body.repository;
+  if (!repository) return res.status(404).send("404 - Please provide a repository");
+  const config = req.body.config;
+  if (!config) return res.status(404).send("404 - Please provide the config");
+  const results = await DB.run("INSERT INTO configs (name, yaml) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET yaml = ?", [repository, config, config]).catch(console.error);
+  return res.json(results);
+});
+
+apiRouter.get("/deploy", async (req, res) => {
+  const repository = req.query.repository;
+  if (!repository) return res.status(404).send("404 - Please provide a repository");
+  const repoKey = `${DEPLOY_PREFIX}-${repository}`;
+  const repoResponse = await getAsync(repoKey).catch(console.error);
+  const repo = JSON.parse(repoResponse);
+  const configKey = `${CONFIG_PREFIX}-${repository}`;
+  const configReponse = await getAsync(configKey).catch(console.error);
+  const config = JSON.parse(configReponse);
+  return res.json({ tag: repo.tag, config: config.config });
 });
 
 app.use(function (req, res, next) {
@@ -142,3 +153,6 @@ const port = 5000;
 app.listen(port, () => {
   console.log(`API server started: http://localhost:${port}`);
 });
+
+//curl --unix-socket /Users/willfong/.docker/run/docker-cli-api.sock -H "Content-Type: application/json" -d '{"Image": "redis:5-buster"}' -X POST http://localhost/v1.41/containers/create
+//curl --unix-socket /private/var/run/docker.sock -H "Content-Type: application/json" -d '{"Image": "redis:5-buster"}' -X POST http://localhost/v1.41/containers/create

@@ -1,43 +1,49 @@
-const mongoose = require('mongoose');
+// https://github.com/mapbox/node-sqlite3/wiki/API
+// https://www.freecodecamp.org/news/javascript-from-callbacks-to-async-await-1cc090ddad99/
+// https://davidwalsh.name/async-await
+var sqlite3 = require('sqlite3').verbose();
+const DB_NAME = process.env.SQLITE_DB || '/sqlite.db';
 
-mongoose.connect('mongodb://localhost/test', {useNewUrlParser: true, useUnifiedTopology: true});
-const db = mongoose.connection;
-db.on('error', console.error.bind(console, 'connection error:'));
-db.once('open', function() {
-  // we're connected!
+const db = new sqlite3.Database(DB_NAME, err => {
+  if (err) {
+    return console.error(err.message);
+  }
+  console.log(`[CONFIG] DB_NAME: ${DB_NAME}`);
+  init_db();
 });
 
-
-function closeConnection() {
-  mongoose.connection.close();
+function run(query, params = []) {
+  return new Promise(function (resolve, reject) {
+    db.run(query, params, function (err) {
+      if (err) {
+        reject(err);
+      }
+      resolve([this.lastID, this.changes]);
+    })
+  })
 }
 
-function ObjectId(id) {
-  return mongoose.mongo.ObjectId(id);
+function all(query, params = []) {
+  return new Promise(function (resolve, reject) {
+    db.all(query, params, function (err, rows) {
+      if (err) {
+        reject(err);
+      }
+      resolve(rows);
+    })
+  })
 }
 
-
-const kittySchema = new mongoose.Schema({
-  name: String
-});
-const Kitten = mongoose.model('Kitten', kittySchema);
-
-
-const agentSchema = new mongoose.Schema({
-	registration_end_date: Date,
-	estate_agent_license_no: String,
-	salesperson_name: String,
-	registration_no: String,
-	registration_start_date: Date,
-	estate_agent_name: String,
-	_id: Number
-});
-const Agent = mongoose.model('Agent', agentSchema);
-
+function init_db() {
+  const query_create_configs = `CREATE TABLE IF NOT EXISTS configs(
+    name TEXT PRIMARY KEY,
+    yaml TEXT
+  )
+  `;
+  run(query_create_configs);
+}
 
 module.exports = {
-	closeConnection,
-	ObjectId,
-	Kitten,
-	Agent
+  run,
+  all,
 };

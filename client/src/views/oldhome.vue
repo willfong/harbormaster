@@ -24,13 +24,8 @@
               <a
                 v-for="repo in repositories"
                 :key="repo"
-                class="hover:bg-yellow-600 hover:bg-opacity-75 hover:text-white group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer"
-                :class="{
-                  'text-yellow-400': selectedRepo == repo,
-                  'text-gray-400': selectedRepo != repo,
-                  'font-bold': selectedRepo == repo,
-                }"
-                @click="fetchData(repo)"
+                :href="`#${repo}`"
+                class="text-white hover:bg-indigo-600 hover:bg-opacity-75 group flex items-center px-2 py-2 text-sm font-medium rounded-md"
               >
                 {{ repo }}
               </a>
@@ -84,17 +79,14 @@ HostConfig:
                 <p>{{ tag }}</p>
                 <button
                   @click="deploy(tag)"
-                  v-if="
-                    !repoStatus ||
-                    (repoStatus && !repoStatus.Config.Image.endsWith(tag))
-                  "
+                  v-if="!repoStatus || repoStatus.tag != tag"
                   type="button"
                   class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   Deploy
                 </button>
-                <p v-if="repoStatus && repoStatus.Config.Image.endsWith(tag)">
-                  Deployed on: {{ repoStatus.Created }}
+                <p v-if="repoStatus && repoStatus.tag == tag">
+                  Deployed on: {{ repoStatus.date }}
                 </p>
               </div>
             </div>
@@ -121,6 +113,13 @@ export default {
       tags: [],
     };
   },
+  watch: {
+    selectedRepo() {
+      this.fetchTags();
+      this.fetchRepoStatus();
+      this.fetchConfig();
+    },
+  },
   mounted() {
     this.fetchRepositories();
   },
@@ -128,33 +127,34 @@ export default {
     async fetchRepositories() {
       const response = await axios.get("/api/repository/list");
       this.repositories = response.data.repositories;
-      this.fetchData(this.repositories[0]);
+      this.selectedRepo = response.data.repositories[0];
     },
-
-    async fetchData(repo) {
-      this.selectedRepo = repo;
-      this.fetchConfig();
-      this.fetchTags();
-      this.fetchStatus();
-    },
-
     async fetchTags() {
       const response = await axios.get("/api/repository/tags", {
         params: { repository: this.selectedRepo },
       });
-      this.tags = response.data.tags.reverse();
+      this.tags = response.data.tags.sort();
     },
     async deploy(tag) {
-      await axios.post("/api/repository/deploy", {
+      const response = await axios.post("/api/repository/deploy", {
         repository: this.selectedRepo,
+        name: this.selectedRepo,
         tag,
       });
-      this.fetchStatus();
+      console.log("deploy status:", response.data);
+      this.fetchRepoStatus();
+    },
+    async fetchRepoStatus() {
+      const response = await axios.get("/api/repository/status", {
+        params: { repository: this.selectedRepo },
+      });
+      this.repoStatus = response.data;
     },
     async fetchConfig() {
       const response = await axios.get("/api/repository/config", {
         params: { repository: this.selectedRepo },
       });
+      console.log(response.data);
       this.repoConfig = response.data.yaml;
     },
     async setConfig() {
@@ -162,12 +162,6 @@ export default {
         repository: this.selectedRepo,
         config: this.repoConfig,
       });
-    },
-    async fetchStatus() {
-      const response = await axios.get("/api/repository/status", {
-        params: { repository: this.selectedRepo },
-      });
-      this.repoStatus = response.data;
     },
   },
 };
