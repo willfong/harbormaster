@@ -2,7 +2,7 @@
 // https://www.freecodecamp.org/news/javascript-from-callbacks-to-async-await-1cc090ddad99/
 // https://davidwalsh.name/async-await
 var sqlite3 = require('sqlite3').verbose();
-const DB_NAME = process.env.SQLITE_DB || '/sqlite.db';
+const DB_NAME = process.env.SQLITE_DB || '/data/sqlite.db';
 
 const db = new sqlite3.Database(DB_NAME, err => {
   if (err) {
