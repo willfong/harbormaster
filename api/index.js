@@ -103,8 +103,10 @@ apiRouter.get("/repository/status", async (req, res) => {
     const response = await axios_docker.get(`/v1.41/containers/${repository}/json`, {})
     return res.json(response.data);
   } catch (e) {
-    if (e.response.data.message && !e.response.data.message.startsWith('No such container')) {
-      console.log('error from stop', e.response.data.message);
+    console.log("Full Error getting status")
+    console.log(e);
+    if (e.response.data && !e.response.data.message.startsWith('No such container')) {
+      console.log('error from getting status', e.response.data.message);
     }
   }
   return res.json(false);
