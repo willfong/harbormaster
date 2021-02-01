@@ -142,7 +142,7 @@ export default {
       const response = await axios.get("/api/repository/tags", {
         params: { repository: this.selectedRepo },
       });
-      this.tags = response.data.tags.reverse();
+      this.tags = response.data.tags.sort().reverse();
     },
     async deploy(tag) {
       await axios.post("/api/repository/deploy", {
