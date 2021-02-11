@@ -1,10 +1,5 @@
-# Express + Mongo
+# Harbormaster
 
-
-
-## Getting Started For Development
-
-- Server: `cd api; npm run serve`
-- Client: `cd client; npm run serve`
-- MongoDB: `docker run --rm --name db -p 27017:27017 -d mongo:4.4`
-- Redis: `docker run --rm --name redis -p 6379:6379 -d redis`
+```
+docker run -d --name=harbormaster --network main --restart=always -v /data/harbormaster/data:/data -v /var/run:/var/run -e REGISTRY_HOST=registry:5000 -p 5003:5000 wfong/harbormaster
+```

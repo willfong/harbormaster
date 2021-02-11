@@ -7,7 +7,6 @@ RUN apk --no-cache --virtual build-dependencies add \
 RUN mkdir -p /home/node/app/node_modules && chown -R node:node /home/node/app
 WORKDIR /home/node/app
 COPY --chown=node:node . .
-USER node
 RUN cd /home/node/app/api && \
     yarn install && \
     cd /home/node/app/client && \
