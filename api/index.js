@@ -27,7 +27,7 @@ app.use(express.static(staticPagePath));
 
 const DOCKER_SOCK = process.env.DOCKER_SOCK || '/var/run/docker.sock';
 console.log(`[CONFIG] DOCKER_SOCK: ${DOCKER_SOCK}`);
-const axios_docker = axios.create({ socketPath: DOCKER_SOCK });
+const axios_docker = axios.create({ socketPath: DOCKER_SOCK, baseURL: 'http://localhost' });
 
 
 // Routes
@@ -64,7 +64,7 @@ apiRouter.post("/repository/deploy", async (req, res) => {
     console.log(`[${repository}] Stopping container...`);
     await axios_docker.post(`/v1.41/containers/${repository}/stop`, {})
   } catch (e) {
-    if (e.response.data.message && !e.response.data.message.startsWith('No such container')) {
+    if (e.response && e.response.data.message && !e.response.data.message.startsWith('No such container')) {
       console.log('error from stop', e.response.data.message);
     }
   }
@@ -73,13 +73,17 @@ apiRouter.post("/repository/deploy", async (req, res) => {
     console.log(`[${repository}] Deleting ontainer...`);
     await axios_docker.delete(`/v1.41/containers/${repository}`);
   } catch (e) {
-    if (!e.response.data.message.startsWith('No such container')) {
+    if (e.response && e.response.data.message && !e.response.data.message.startsWith('No such container')) {
       console.log('error from delete', e.response.data.message);
     }
   }
   try {
-    console.log(`[${repository}] Creating container using '${Image}'...`)
-    const params = { Image, ...extraConfig };
+    console.log(`[${repository}] Creating container using '${Image}'...`);
+    const params = extraConfig;
+    // Hard code critical settings
+    params['Image'] = Image;
+    params['HostConfig'] = { Name: 'unless-stopped' };
+    console.log(`[${repository}] Using parameters: ${params}`);
     await axios_docker.post('/v1.41/containers/create', params, { params: { name: repository } });
   } catch (e) {
     console.log('error from create', e.response);
@@ -105,7 +109,7 @@ apiRouter.get("/repository/status", async (req, res) => {
   } catch (e) {
     console.log("Full Error getting status")
     console.log(e);
-    if (e.response.data && !e.response.data.message.startsWith('No such container')) {
+    if (e.response && e.response.data && !e.response.data.message.startsWith('No such container')) {
       console.log('error from getting status', e.response.data.message);
     }
   }
